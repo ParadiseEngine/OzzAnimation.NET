@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace OzzAnimation;
@@ -72,8 +73,21 @@ internal ref struct OzzReader
     public float[] ReadSingles(int count)
     {
         var values = new float[count];
-        for (var i = 0; i < count; i++) values[i] = ReadSingle();
+        ReadSingles(values);
         return values;
+    }
+
+    /// <summary>Reads straight into <paramref name="destination"/>. Archives are little-endian, so on a little-endian host this is one vectorized copy rather than a loop.</summary>
+    public void ReadSingles(Span<float> destination)
+    {
+        var bytes = Take(destination.Length * sizeof(float));
+        if (BitConverter.IsLittleEndian)
+        {
+            MemoryMarshal.Cast<byte, float>(bytes).CopyTo(destination);
+            return;
+        }
+
+        for (var i = 0; i < destination.Length; i++) destination[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(i * sizeof(float), sizeof(float))));
     }
 
     public ushort[] ReadUInt16s(int count)
@@ -143,6 +157,12 @@ internal sealed class OzzWriter
 
     public void Write(ReadOnlySpan<float> values)
     {
+        if (BitConverter.IsLittleEndian)
+        {
+            _stream.Write(MemoryMarshal.AsBytes(values));
+            return;
+        }
+
         foreach (var value in values) Write(value);
     }
 

@@ -17,10 +17,9 @@ public class ArchiveTests
         await Assert.That(read.Names[0]).IsEqualTo("hip");
         await Assert.That(read.Names[2]).IsEqualTo("prop");
         await Assert.That(read.Parents.ToArray()).IsEquivalentTo(new short[] { -1, 0, -1 });
-        await Assert.That(read.RestPoses[0].Translation).IsEqualTo(new Vector3(0, 1, 0));
-        await Assert.That(read.RestPoses[1].Rotation).IsEqualTo(TestRigs.QuarterTurnZ);
+        await Assert.That(read.RestPose[0].Translation).IsEqualTo(new Vector3(0, 1, 0));
+        await Assert.That(read.RestPose[1].Rotation).IsEqualTo(TestRigs.QuarterTurnZ);
         await Assert.That(read.FindJoint("knee")).IsEqualTo(1);
-        await Assert.That(read.FindJoint("knee"u8)).IsEqualTo(1);
         await Assert.That(read.FindJoint("toe")).IsEqualTo(-1);
         await Assert.That(read.IsLeaf(0)).IsFalse();
         await Assert.That(read.IsLeaf(1)).IsTrue();
@@ -29,17 +28,11 @@ public class ArchiveTests
     }
 
     [Test]
-    public async Task the_soa_rest_pose_and_the_joint_array_agree()
+    public async Task the_spare_lanes_of_the_last_group_hold_identity()
     {
         var skeleton = TestRigs.BenchmarkSkeleton();
 
-        for (var i = 0; i < skeleton.JointCount; i++)
-        {
-            await Assert.That(skeleton.RestPose[i]).IsEqualTo(skeleton.RestPoses[i]);
-        }
-
-        // The spare lanes of the last group hold identity, which is what keeps a blend or a
-        // hierarchy walk from reading rubbish out of the padding.
+        // Which is what keeps a blend or a hierarchy walk from reading rubbish out of the padding.
         var lastGroup = skeleton.SoaJointCount - 1;
         for (var lane = skeleton.JointCount - lastGroup * 4; lane < 4; lane++)
         {
@@ -78,7 +71,7 @@ public class ArchiveTests
     [Test]
     public async Task a_skeleton_whose_parent_follows_its_child_is_refused()
     {
-        var error = await Assert.That(() => new Skeleton(["a", "b"], [1, -1], [JointPose.Identity, JointPose.Identity])).Throws<ArgumentException>();
+        var error = await Assert.That(() => new Skeleton(["a", "b"], [1, -1], TestRigs.Pose(JointPose.Identity, JointPose.Identity))).Throws<ArgumentException>();
 
         await Assert.That(error!.Message).Contains("depth-first");
     }

@@ -81,6 +81,13 @@ public unsafe class AnimationBenchmarks
         fixed (float* m = _nativeModels) NativeOzz.SampleModelSpace(_nativeSkeleton, _nativeClip, _nativeContext, Advance(), m);
     }
 
+    /// <summary>Sampling alone, so the frame's cost can be split between the sampler and the hierarchy walk.</summary>
+    [Benchmark, BenchmarkCategory("Advance")]
+    public void Sample_Advance() => _context.Sample(_clip, Advance(), _poses);
+
+    [Benchmark, BenchmarkCategory("Seek")]
+    public void Sample_Seek() => _context.Sample(_clip, Seek(), _poses);
+
     [Benchmark, BenchmarkCategory("Seek")]
     public void Managed_Seek()
     {

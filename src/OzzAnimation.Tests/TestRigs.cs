@@ -15,21 +15,27 @@ internal static class TestRigs
     public static Skeleton Chain() => new(
         ["hip", "knee", "prop"],
         [Skeleton.NoParent, 0, Skeleton.NoParent],
-        [
+        Pose(
             new JointPose(new Vector3(0, 1, 0), Quaternion.Identity, Vector3.One),
             new JointPose(Vector3.Zero, QuarterTurnZ, Vector3.One),
-            JointPose.Identity,
-        ]);
+            JointPose.Identity));
 
     /// <summary>A three-joint chain lying along +X, each bone one unit long — the shape the two-bone IK tests solve.</summary>
     public static Skeleton Arm() => new(
         ["shoulder", "elbow", "wrist"],
         [Skeleton.NoParent, 0, 1],
-        [
+        Pose(
             JointPose.Identity,
             new JointPose(new Vector3(1, 0, 0), Quaternion.Identity, Vector3.One),
-            new JointPose(new Vector3(1, 0, 0), Quaternion.Identity, Vector3.One),
-        ]);
+            new JointPose(new Vector3(1, 0, 0), Quaternion.Identity, Vector3.One)));
+
+    /// <summary>The pose set holding these joints, in order.</summary>
+    public static SoaTransforms Pose(params JointPose[] poses)
+    {
+        var transforms = new SoaTransforms(poses.Length);
+        transforms.CopyFrom(poses);
+        return transforms;
+    }
 
     public static Skeleton BenchmarkSkeleton() => Skeleton.Load(Fixture("bench-skeleton.ozz"));
 

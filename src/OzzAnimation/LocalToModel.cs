@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
 namespace OzzAnimation;
@@ -33,7 +34,7 @@ public static class LocalToModel
         var translations = locals.Translations.AsSpan();
         var rotations = locals.Rotations.AsSpan();
         var scales = locals.Scales.AsSpan();
-        Span<float> rows = stackalloc float[48];
+        Span<Matrix4x4> group = stackalloc Matrix4x4[4];
 
         var end = Math.Min(to + 1, count);
         var joint = Math.Max(from + (fromExcluded ? 1 : 0), 0);
@@ -44,39 +45,39 @@ public static class LocalToModel
             // A whole group of four is built at once even when only some of its lanes are wanted;
             // the lane loop below is what decides which of them are written.
             var g = joint / 4;
-            AffineRows(in translations[g], in rotations[g], in scales[g], rows);
+            AffineMatrices(in translations[g], in rotations[g], in scales[g], group);
             for (var groupEnd = (joint + 4) & ~3; joint < groupEnd && process; joint++, process = joint < end && parents[joint] >= from)
             {
-                var lane = joint & 3;
-                var local = new Matrix4x4(
-                    rows[lane], rows[4 + lane], rows[8 + lane], 0f,
-                    rows[12 + lane], rows[16 + lane], rows[20 + lane], 0f,
-                    rows[24 + lane], rows[28 + lane], rows[32 + lane], 0f,
-                    rows[36 + lane], rows[40 + lane], rows[44 + lane], 1f);
                 var parent = parents[joint];
-                models[joint] = local * (parent == Skeleton.NoParent ? rootMatrix : models[parent]);
+                models[joint] = group[joint & 3] * (parent == Skeleton.NoParent ? rootMatrix : models[parent]);
             }
         }
     }
 
-    /// <summary>The twelve affine entries of four joints at once — rotation rows scaled per axis, then the translation — stored lane-major so a joint's matrix is one column of the buffer.</summary>
-    private static void AffineRows(in SoaVector3 t, in SoaQuaternion q, in SoaVector3 s, Span<float> rows)
+    /// <summary>
+    /// The affine matrices of four joints at once — the rotation's rows scaled per axis, then the
+    /// translation — built in lanes and transposed straight into four <see cref="Matrix4x4"/>.
+    /// ozz's <c>SoaFloat4x4::FromAffine</c> followed by its <c>Transpose16x16</c>.
+    /// </summary>
+    private static void AffineMatrices(in SoaVector3 t, in SoaQuaternion q, in SoaVector3 s, Span<Matrix4x4> group)
     {
         var two = Vector128.Create(2f);
         var one = Vector128<float>.One;
+        var zero = Vector128<float>.Zero;
         var xx = q.X * q.X; var yy = q.Y * q.Y; var zz = q.Z * q.Z;
         var xy = q.X * q.Y; var wz = q.Z * q.W; var xz = q.Z * q.X; var wy = q.Y * q.W; var yz = q.Y * q.Z; var wx = q.X * q.W;
-        ((one - two * (yy + zz)) * s.X).CopyTo(rows[..4]);
-        (two * (xy + wz) * s.X).CopyTo(rows[4..8]);
-        (two * (xz - wy) * s.X).CopyTo(rows[8..12]);
-        (two * (xy - wz) * s.Y).CopyTo(rows[12..16]);
-        ((one - two * (zz + xx)) * s.Y).CopyTo(rows[16..20]);
-        (two * (yz + wx) * s.Y).CopyTo(rows[20..24]);
-        (two * (xz + wy) * s.Z).CopyTo(rows[24..28]);
-        (two * (yz - wx) * s.Z).CopyTo(rows[28..32]);
-        ((one - two * (yy + xx)) * s.Z).CopyTo(rows[32..36]);
-        t.X.CopyTo(rows[36..40]);
-        t.Y.CopyTo(rows[40..44]);
-        t.Z.CopyTo(rows[44..48]);
+
+        // Each transpose turns one row of the four joints' matrices into that row for each joint,
+        // so the four results land as whole rows and nothing round-trips through the stack.
+        SoaMath.Transpose((one - two * (yy + zz)) * s.X, two * (xy + wz) * s.X, two * (xz - wy) * s.X, zero, out var a0, out var b0, out var c0, out var d0);
+        SoaMath.Transpose(two * (xy - wz) * s.Y, (one - two * (zz + xx)) * s.Y, two * (yz + wx) * s.Y, zero, out var a1, out var b1, out var c1, out var d1);
+        SoaMath.Transpose(two * (xz + wy) * s.Z, two * (yz - wx) * s.Z, (one - two * (yy + xx)) * s.Z, zero, out var a2, out var b2, out var c2, out var d2);
+        SoaMath.Transpose(t.X, t.Y, t.Z, one, out var a3, out var b3, out var c3, out var d3);
+
+        var rows = MemoryMarshal.Cast<Matrix4x4, Vector128<float>>(group);
+        rows[0] = a0; rows[1] = a1; rows[2] = a2; rows[3] = a3;
+        rows[4] = b0; rows[5] = b1; rows[6] = b2; rows[7] = b3;
+        rows[8] = c0; rows[9] = c1; rows[10] = c2; rows[11] = c3;
+        rows[12] = d0; rows[13] = d1; rows[14] = d2; rows[15] = d3;
     }
 }

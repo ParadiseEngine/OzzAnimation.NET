@@ -1,5 +1,7 @@
 using System.Numerics;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 
 namespace OzzAnimation;
 
@@ -93,4 +95,36 @@ internal static class SoaMath
         var lerp = new Quaternion(fixedUp.X * w, fixedUp.Y * w, fixedUp.Z * w, (fixedUp.W - 1f) * w + 1f);
         return Quaternion.Normalize(lerp);
     }
+
+    /// <summary>
+    /// A 4×4 transpose of four rows into four columns — ozz's <c>Transpose4x4</c>, and the whole of
+    /// what turns structure-of-arrays lanes back into per-joint values and vice versa. Two
+    /// interleaves and four half-vector joins; no value ever passes through a scalar register.
+    /// </summary>
+    public static void Transpose(
+        Vector128<float> row0, Vector128<float> row1, Vector128<float> row2, Vector128<float> row3,
+        out Vector128<float> column0, out Vector128<float> column1, out Vector128<float> column2, out Vector128<float> column3)
+    {
+        var low01 = InterleaveLower(row0, row1);     // x0 x1 y0 y1
+        var low23 = InterleaveLower(row2, row3);     // x2 x3 y2 y3
+        var high01 = InterleaveUpper(row0, row1);    // z0 z1 w0 w1
+        var high23 = InterleaveUpper(row2, row3);    // z2 z3 w2 w3
+        column0 = Vector128.Create(low01.GetLower(), low23.GetLower());
+        column1 = Vector128.Create(low01.GetUpper(), low23.GetUpper());
+        column2 = Vector128.Create(high01.GetLower(), high23.GetLower());
+        column3 = Vector128.Create(high01.GetUpper(), high23.GetUpper());
+    }
+
+    // There is no cross-platform Vector128 interleave, so the one instruction that needs naming is
+    // named per architecture; the JIT folds these checks away. The last branch is reached only on a
+    // target with neither instruction set, where the surrounding code is scalar anyway.
+    private static Vector128<float> InterleaveLower(Vector128<float> a, Vector128<float> b) =>
+        Sse.IsSupported ? Sse.UnpackLow(a, b)
+        : AdvSimd.Arm64.IsSupported ? AdvSimd.Arm64.ZipLow(a, b)
+        : Vector128.Create(a[0], b[0], a[1], b[1]);
+
+    private static Vector128<float> InterleaveUpper(Vector128<float> a, Vector128<float> b) =>
+        Sse.IsSupported ? Sse.UnpackHigh(a, b)
+        : AdvSimd.Arm64.IsSupported ? AdvSimd.Arm64.ZipHigh(a, b)
+        : Vector128.Create(a[2], b[2], a[3], b[3]);
 }

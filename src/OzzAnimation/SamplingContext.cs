@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
 namespace OzzAnimation;
@@ -187,22 +188,48 @@ public sealed class SamplingContext
             }
         }
 
+        // The sampler's hottest loop by a wide margin: a seek walks thousands of keys. So each
+        // key's back-link is resolved once rather than recomputed for the condition and again in
+        // the body, and the indexing goes through raw references rather than bounds-checked spans.
+        // What makes that sound is KeyframeStream.Check, which ran when the clip was constructed
+        // and rejects any stream whose back-link reaches before the start, whose key names a
+        // timepoint past the end, or whose first key sits anywhere but the clip's start — that
+        // last one being what stops the backward loop below from walking off key 0.
+        ref var previousesAt = ref MemoryMarshal.GetReference(previouses);
+        ref var ratiosAt = ref MemoryMarshal.GetReference(stream.Ratios);
+        ref var timepointsAt = ref MemoryMarshal.GetReference(timepoints);
+        var wide = stream.WideRatios;
+
         var track = 0;
-        for (; next < numKeys && stream.KeyRatio(timepoints, next - previouses[(int)next]) <= ratio; next++)
+        while (next < numKeys)
         {
-            track = TrackForward(entries, next - previouses[(int)next], track);
+            var previousKey = next - Unsafe.Add(ref previousesAt, next);
+            if (KeyRatio(ref ratiosAt, ref timepointsAt, wide, previousKey) > ratio) break;
+            track = TrackForward(entries, previousKey, track);
             outdated[track] = 1;
             entries[track] = next;
+            next++;
         }
 
-        for (; stream.KeyRatio(timepoints, (next - 1) - previouses[(int)next - 1]) > ratio; next--)
+        while (true)
         {
-            track = TrackBackward(entries, next - 1, track);
+            var key = next - 1;
+            if (KeyRatio(ref ratiosAt, ref timepointsAt, wide, key - Unsafe.Add(ref previousesAt, key)) <= ratio) break;
+            track = TrackBackward(entries, key, track);
             outdated[track] = 1;
             entries[track] -= previouses[(int)entries[track]];
+            next--;
         }
 
         cache.Next = next;
+    }
+
+    /// <summary>The ratio of a key, indexed without a bounds check; see the note in <see cref="UpdateCache"/>.</summary>
+    private static float KeyRatio(ref byte ratios, ref float timepoints, bool wide, uint key)
+    {
+        var at = (int)key;
+        var timepoint = wide ? Unsafe.Add(ref ratios, at * 2) | (Unsafe.Add(ref ratios, at * 2 + 1) << 8) : Unsafe.Add(ref ratios, at);
+        return Unsafe.Add(ref timepoints, timepoint);
     }
 
     private static uint InitializeCache(in StreamView stream, int iframe, Span<uint> entries)

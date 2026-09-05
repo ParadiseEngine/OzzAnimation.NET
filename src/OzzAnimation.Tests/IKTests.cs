@@ -20,7 +20,7 @@ public class IKTests
     {
         var skeleton = TestRigs.Arm();
         var locals = new SoaTransforms(skeleton.JointCount);
-        locals.CopyFrom(skeleton.RestPoses);
+        locals.CopyFrom(skeleton.RestPose);
         var models = new Matrix4x4[skeleton.JointCount];
         LocalToModel.Compute(skeleton, locals, models);
         return (skeleton, locals, models);

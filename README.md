@@ -113,22 +113,34 @@ One frame of one 64-joint character — sample plus local-to-model — on an App
 
 | | This library | ozz 0.17 (C++) |
 |---|---|---|
-| Playback (steps 1/100 of the clip per frame) | **1.168 µs** | 1.171 µs |
-| Scrubbing (jumps to a random ratio per frame) | 3.790 µs | **3.220 µs** |
+| Playback (steps 1/100 of the clip per frame) | 1.128 µs | 1.197 µs |
+| Scrubbing (jumps to a random ratio per frame) | 3.607 µs | **3.201 µs** |
 | Allocated per frame | 0 B | 0 B |
 
-Playback is a dead heat. Scrubbing is about 18% behind, and that gap is the deliberate trade named
-above: ozz seeks with estimated reciprocal and inverse-square-root instructions, this library uses
-exact ones.
+Playback is a dead heat; this run has it slightly ahead, but run-to-run drift on this machine is a
+few percent either way, so read the two as equal rather than as a win. Scrubbing is about 12%
+behind, and that gap is the deliberate trade named above: ozz seeks with estimated reciprocal and
+inverse-square-root instructions, this library uses exact ones.
 
-The other runtime jobs on the same 64-joint rig, for scale (ozz's C++ is not wired up for these —
-the shim covers sampling only — so these are absolute numbers, not a comparison):
+Splitting the frame shows where the work is, and where it is worth looking:
+
+| | Sampling | Local-to-model | Frame |
+|---|---|---|---|
+| Playback | 690 ns | 438 ns | 1128 ns |
+| Scrubbing | 3175 ns | 432 ns | 3607 ns |
+
+Scrubbing is 88% sampler. Both runtimes walk the same keys from the same i-frames — the cost is
+per-key, so the lever that actually moves it is i-frame density at build time (`gltf2ozz`'s
+sampling rate), not anything the runtime can do.
+
+The other runtime jobs on the same rig, for scale (ozz's C++ is not wired up for these — the shim
+covers sampling only — so these are absolute numbers, not a comparison):
 
 | Job | Mean |
 |---|---|
-| `BlendingJob`, two layers | 182 ns |
-| `BlendingJob`, two layers plus an additive one | 395 ns |
-| `LocalToModel`, whole skeleton | 456 ns |
+| `BlendingJob`, two layers | 175 ns |
+| `BlendingJob`, two layers plus an additive one | 397 ns |
+| `LocalToModel`, whole skeleton | 435 ns |
 | `IKTwoBoneJob` | 155 ns |
 | `IKAimJob` | 92 ns |
 

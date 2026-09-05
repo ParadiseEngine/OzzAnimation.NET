@@ -1,4 +1,4 @@
-using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace OzzAnimation;
@@ -9,9 +9,11 @@ namespace OzzAnimation;
 /// forward pass computes model-space poses.
 /// </summary>
 /// <remarks>
-/// Reads and writes the <c>ozz-skeleton</c> archive, version 2 (ozz-animation 0.17). The archive
-/// stores rest poses in structure-of-arrays groups of four; they are unpacked here to one
-/// transform per joint because the sampler in this assembly is scalar.
+/// Reads and writes the <c>ozz-skeleton</c> archive, version 2 (ozz-animation 0.17). The rest pose
+/// is held in the structure-of-arrays layout the archive stores and every job consumes, so loading
+/// is a bulk copy rather than a transpose, and there is one representation of it rather than two.
+/// Reach a single joint through <see cref="SoaTransforms"/>'s indexer or
+/// <see cref="SkeletonUtils.JointRestPoseLocalSpace"/>.
 /// </remarks>
 public sealed class Skeleton
 {
@@ -24,19 +26,25 @@ public sealed class Skeleton
 
     public const short NoParent = -1;
 
+    // The archive stores a group of four joints as translation xyz, rotation xyzw, scale xyz —
+    // ten SIMD lanes of four floats, which is exactly how SoaTransforms holds them. A SoaVector3
+    // is twelve contiguous floats and a SoaQuaternion sixteen, so loading and saving are bulk
+    // copies over the pose set's own arrays rather than a per-lane transpose.
+    private const int FloatsPerSoaVector3 = 12;
+    private const int FloatsPerSoaQuaternion = 16;
+
     private readonly string[] _names;
     private readonly short[] _parents;
-    private readonly JointPose[] _restPoses;
-    private readonly byte[][] _utf8Names;
 
-    public Skeleton(string[] names, short[] parents, JointPose[] restPoses)
+    /// <exception cref="ArgumentException">Mismatched lengths, too many joints, or a parent that does not precede its child.</exception>
+    public Skeleton(string[] names, short[] parents, SoaTransforms restPose)
     {
         ArgumentNullException.ThrowIfNull(names);
         ArgumentNullException.ThrowIfNull(parents);
-        ArgumentNullException.ThrowIfNull(restPoses);
-        if (parents.Length != names.Length || restPoses.Length != names.Length)
+        ArgumentNullException.ThrowIfNull(restPose);
+        if (parents.Length != names.Length || restPose.JointCount != names.Length)
         {
-            throw new ArgumentException($"{names.Length} names, {parents.Length} parents and {restPoses.Length} rest poses do not describe one skeleton.");
+            throw new ArgumentException($"{names.Length} names, {parents.Length} parents and {restPose.JointCount} rest poses do not describe one skeleton.");
         }
 
         if (names.Length > MaxJoints) throw new ArgumentException($"{names.Length} joints exceed ozz's limit of {MaxJoints}.");
@@ -50,42 +58,25 @@ public sealed class Skeleton
 
         _names = names;
         _parents = parents;
-        _restPoses = restPoses;
-        RestPose = new SoaTransforms(restPoses.Length);
-        RestPose.CopyFrom(restPoses);
-        _utf8Names = new byte[names.Length][];
-        for (var i = 0; i < names.Length; i++) _utf8Names[i] = Encoding.UTF8.GetBytes(names[i]);
+        RestPose = restPose;
     }
 
-    /// <summary>The rest pose in ozz's structure-of-arrays layout — <c>joint_rest_poses()</c>. This is what <see cref="BlendingJob"/> takes as its reference pose and what <see cref="SkeletonUtils.RestPoseModelSpace"/> walks; the spare lanes of the last group hold identity.</summary>
+    /// <summary>The rest pose — ozz's <c>joint_rest_poses()</c>. What <see cref="BlendingJob"/> takes as its reference pose and what <see cref="SkeletonUtils.RestPoseModelSpace"/> walks; the spare lanes of the last group hold identity.</summary>
     public SoaTransforms RestPose { get; }
 
-    public int SoaJointCount => (JointCount + 3) / 4;
-
     public int JointCount => _names.Length;
+
+    public int SoaJointCount => (JointCount + 3) / 4;
 
     public ReadOnlySpan<string> Names => _names;
 
     public ReadOnlySpan<short> Parents => _parents;
 
-    public ReadOnlySpan<JointPose> RestPoses => _restPoses;
-
     /// <summary>The skeleton with no joints — ozz's default-constructed <c>Skeleton</c>, valid anywhere one is asked for.</summary>
-    public static Skeleton Empty { get; } = new([], [], []);
+    public static Skeleton Empty { get; } = new([], [], new SoaTransforms(0));
 
     /// <summary>The first joint of that exact name, or −1. ozz's <c>FindJoint</c>.</summary>
     public int FindJoint(string name) => Array.IndexOf(_names, name);
-
-    /// <summary>The same lookup against a UTF-8 name, for a caller holding bytes rather than a string; allocation-free.</summary>
-    public int FindJoint(ReadOnlySpan<byte> utf8Name)
-    {
-        for (var i = 0; i < _utf8Names.Length; i++)
-        {
-            if (_utf8Names[i].AsSpan().SequenceEqual(utf8Name)) return i;
-        }
-
-        return -1;
-    }
 
     public bool IsLeaf(int joint)
     {
@@ -107,7 +98,7 @@ public sealed class Skeleton
         if (count == 0)
         {
             reader.ExpectEnd("skeleton");
-            return new Skeleton([], [], []);
+            return new Skeleton([], [], new SoaTransforms(0));
         }
 
         if (count < 0 || count > MaxJoints) throw new InvalidDataException($"The ozz skeleton names {count} joints; the limit is {MaxJoints}.");
@@ -134,21 +125,22 @@ public sealed class Skeleton
             }
         }
 
-        var groups = (count + 3) / 4;
-        var soa = reader.ReadSingles(groups * SoaFloatsPerGroup);
-        reader.ExpectEnd("skeleton");
-        var poses = new JointPose[count];
-        for (var i = 0; i < count; i++)
+        // The archive's rest-pose block is already grouped the way SoaTransforms holds it, so each
+        // group's three runs are read straight into place — the spare lanes of the last group
+        // included, which is what lets Save reproduce the file byte for byte.
+        var restPose = new SoaTransforms(count);
+        var translations = MemoryMarshal.Cast<SoaVector3, float>(restPose.Translations.AsSpan());
+        var rotations = MemoryMarshal.Cast<SoaQuaternion, float>(restPose.Rotations.AsSpan());
+        var scales = MemoryMarshal.Cast<SoaVector3, float>(restPose.Scales.AsSpan());
+        for (var g = 0; g < restPose.GroupCount; g++)
         {
-            var g = (i / 4) * SoaFloatsPerGroup;
-            var lane = i % 4;
-            poses[i] = new JointPose(
-                new Vector3(soa[g + lane], soa[g + 4 + lane], soa[g + 8 + lane]),
-                new Quaternion(soa[g + 12 + lane], soa[g + 16 + lane], soa[g + 20 + lane], soa[g + 24 + lane]),
-                new Vector3(soa[g + 28 + lane], soa[g + 32 + lane], soa[g + 36 + lane]));
+            reader.ReadSingles(translations.Slice(g * FloatsPerSoaVector3, FloatsPerSoaVector3));
+            reader.ReadSingles(rotations.Slice(g * FloatsPerSoaQuaternion, FloatsPerSoaQuaternion));
+            reader.ReadSingles(scales.Slice(g * FloatsPerSoaVector3, FloatsPerSoaVector3));
         }
 
-        return new Skeleton(names, parents, poses);
+        reader.ExpectEnd("skeleton");
+        return new Skeleton(names, parents, restPose);
     }
 
     public byte[] Save()
@@ -167,23 +159,17 @@ public sealed class Skeleton
         writer.Write((int)chars.Length);
         writer.Write(chars.ToArray());
         writer.Write(_parents);
-        var groups = (JointCount + 3) / 4;
-        var soa = new float[groups * SoaFloatsPerGroup];
-        for (var i = 0; i < groups * 4; i++)
+        var translations = MemoryMarshal.Cast<SoaVector3, float>(RestPose.Translations);
+        var rotations = MemoryMarshal.Cast<SoaQuaternion, float>(RestPose.Rotations);
+        var scales = MemoryMarshal.Cast<SoaVector3, float>(RestPose.Scales);
+        for (var g = 0; g < RestPose.GroupCount; g++)
         {
-            var pose = i < JointCount ? _restPoses[i] : JointPose.Identity;
-            var g = (i / 4) * SoaFloatsPerGroup;
-            var lane = i % 4;
-            soa[g + lane] = pose.Translation.X; soa[g + 4 + lane] = pose.Translation.Y; soa[g + 8 + lane] = pose.Translation.Z;
-            soa[g + 12 + lane] = pose.Rotation.X; soa[g + 16 + lane] = pose.Rotation.Y; soa[g + 20 + lane] = pose.Rotation.Z; soa[g + 24 + lane] = pose.Rotation.W;
-            soa[g + 28 + lane] = pose.Scale.X; soa[g + 32 + lane] = pose.Scale.Y; soa[g + 36 + lane] = pose.Scale.Z;
+            writer.Write(translations.Slice(g * FloatsPerSoaVector3, FloatsPerSoaVector3));
+            writer.Write(rotations.Slice(g * FloatsPerSoaQuaternion, FloatsPerSoaQuaternion));
+            writer.Write(scales.Slice(g * FloatsPerSoaVector3, FloatsPerSoaVector3));
         }
 
-        writer.Write(soa);
         return writer.ToArray();
     }
 
-    // translation xyz, rotation xyzw, scale xyz: ten SIMD lanes of four floats.
-    private const int SoaFloatsPerGroup = 40;
 }
-
