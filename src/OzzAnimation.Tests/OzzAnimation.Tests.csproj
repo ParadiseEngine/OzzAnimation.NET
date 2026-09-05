@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>OzzAnimation.Tests</AssemblyName>
+    <RootNamespace>OzzAnimation.Tests</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.65.68" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OzzAnimation/OzzAnimation.csproj" />
+  </ItemGroup>
+
+  <!-- Archives written by ozz-animation 0.17's own SkeletonBuilder/AnimationBuilder from the
+       procedural rig OzzParityTests regenerates: the format contract, as bytes. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Fixtures\*.ozz" />
+  </ItemGroup>
+
+</Project>

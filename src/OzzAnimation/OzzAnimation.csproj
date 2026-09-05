@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>OzzAnimation</AssemblyName>
+    <RootNamespace>OzzAnimation</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>OzzAnimation.NET</PackageId>
+    <Version>0.1.0</Version>
+    <Title>OzzAnimation.NET</Title>
+    <Authors>quabug</Authors>
+    <Description>A managed, SIMD, allocation-free C# port of ozz-animation: load an ozz skeleton and clips, sample a clip into local poses and model-space matrices; build, optimize and save the same archives from raw keyframes. Byte-compatible with ozz-animation 0.17. No native code.</Description>
+    <PackageProjectUrl>https://github.com/ParadiseEngine/OzzAnimation.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ParadiseEngine/OzzAnimation.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>animation;skeleton;skinning;ozz;simd;nativeaot;game-dev</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>
