@@ -32,6 +32,15 @@ reimplements them in C#; it invents nothing. If you find this useful, the credit
 
 Thank you for building it, and for releasing it under a licence that made this port possible.
 
+## How this was written
+
+The port was written with [Claude Code](https://claude.com/claude-code) — the Fable and Opus
+models — working from ozz-animation's own C++ sources, for use in a C# game engine.
+
+Which is a reason to check rather than trust, so little here rests on inspection: the compatibility
+claims below are pinned by tests against archives ozz's own builders produced, the sampler is
+checked against the closed-form curve a fixture was baked from, and the runtime is covered to 99.7%.
+
 ## Compatibility
 
 Byte-compatible with **ozz-animation 0.17**:
