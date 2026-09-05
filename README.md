@@ -175,6 +175,23 @@ dotnet run --project src/OzzAnimation.Tests -c Release
 
 Targets `net10.0`.
 
+## Releasing
+
+The tag is the version — push one and the package ships:
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+`publish-nuget.yml` runs the test suite, packs with the tag's version and pushes to nuget.org. The
+`<Version>` in the csproj is only the default for local builds and does not have to be bumped in
+lockstep; `-p:Version` from the tag wins.
+
+Authentication is OIDC rather than a stored key: nuget.org must be configured to trust this
+repository, and the `NUGET_USER` repository variable must name the nuget.org account when it is not
+the repository owner. No API key lives in this repository.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE), which also carries ozz-animation's own MIT notice.

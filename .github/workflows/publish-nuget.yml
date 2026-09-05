@@ -1,0 +1,114 @@
+# Publishes OzzAnimation.NET to nuget.org when a v*.*.* tag is pushed.
+#
+# The TAG is the source of truth for the package version: it is passed to `dotnet pack` as
+# -p:Version, so the <Version> in the csproj is only the default for local builds and does not need
+# to be bumped in lockstep. Push v0.3.0 and 0.3.0 is what ships.
+#
+# Authentication is OIDC — NuGet/login exchanges the workflow's identity token for a short-lived
+# API key — so there is no long-lived secret in this repository. It requires the nuget.org account
+# to trust this repository, and the NUGET_USER repository variable to name that account (the
+# repository owner is assumed otherwise).
+name: Publish NuGet package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, for example v1.2.3 or v1.2.3-beta.1"
+        required: true
+        type: string
+
+env:
+  DOTNET_NOLOGO: true
+  CONFIGURATION: Release
+  PACKAGE_OUTPUT_DIR: artifacts/nuget
+  NUGET_SOURCE_URL: https://api.nuget.org/v3/index.json
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Resolve package version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+
+          version="${version#v}"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must look like v1.2.3 or v1.2.3-beta.1, got '${version}'"
+            exit 1
+          fi
+
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Resolve NuGet user
+        id: nuget-user
+        shell: bash
+        run: |
+          user="${{ vars.NUGET_USER || github.repository_owner }}"
+
+          if [[ -z "$user" ]]; then
+            echo "::error::Set the NUGET_USER repository variable to your nuget.org username."
+            exit 1
+          fi
+
+          echo "value=$user" >> "$GITHUB_OUTPUT"
+
+      # A tag push skips the CI workflow's checks, so the suite runs here too: the parity tests are
+      # what stand between a typo and a published package that cannot read ozz's archives.
+      - name: Test
+        run: dotnet run --project src/OzzAnimation.Tests -c "$CONFIGURATION"
+
+      - name: Pack
+        shell: bash
+        run: |
+          dotnet pack src/OzzAnimation/OzzAnimation.csproj \
+            -c "$CONFIGURATION" \
+            -o "$PACKAGE_OUTPUT_DIR" \
+            -p:ContinuousIntegrationBuild=true \
+            -p:Version="$PACKAGE_VERSION"
+
+          count=$(ls "$PACKAGE_OUTPUT_DIR"/*.nupkg | wc -l)
+          if [[ "$count" -ne 1 ]]; then
+            echo "::error::Expected 1 package, found $count"
+            exit 1
+          fi
+
+      - name: NuGet login (OIDC -> temporary API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ steps.nuget-user.outputs.value }}
+
+      - name: Publish to NuGet
+        run: >
+          dotnet nuget push "${{ env.PACKAGE_OUTPUT_DIR }}/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source "${{ env.NUGET_SOURCE_URL }}"
+          --skip-duplicate
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: ${{ env.PACKAGE_OUTPUT_DIR }}/*.nupkg
