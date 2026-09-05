@@ -1,98 +1,56 @@
 using System.Numerics;
 
-using OzzAnimation.Offline;
-
 namespace OzzAnimation.Tests;
 
-/// <summary>Rigs and clips the tests share: a two-joint chain, and the LCG-driven rig the parity fixtures were generated from.</summary>
+/// <summary>
+/// The data the tests share. This is a runtime-only library — ozz keeps its builders in a separate
+/// offline module and so does this repository — so skeletons are built through the runtime
+/// constructor and clips come from archives committed under <c>Fixtures/</c>.
+/// </summary>
 internal static class TestRigs
 {
     public static readonly Quaternion QuarterTurnZ = new(0f, 0f, 0.7071068f, 0.7071068f);
 
     /// <summary>hip at (0,1,0) with child knee turned a quarter turn about Z, plus an unparented "prop" node.</summary>
-    public static Skeleton Chain()
+    public static Skeleton Chain() => new(
+        ["hip", "knee", "prop"],
+        [Skeleton.NoParent, 0, Skeleton.NoParent],
+        [
+            new JointPose(new Vector3(0, 1, 0), Quaternion.Identity, Vector3.One),
+            new JointPose(Vector3.Zero, QuarterTurnZ, Vector3.One),
+            JointPose.Identity,
+        ]);
+
+    /// <summary>A three-joint chain lying along +X, each bone one unit long — the shape the two-bone IK tests solve.</summary>
+    public static Skeleton Arm() => new(
+        ["shoulder", "elbow", "wrist"],
+        [Skeleton.NoParent, 0, 1],
+        [
+            JointPose.Identity,
+            new JointPose(new Vector3(1, 0, 0), Quaternion.Identity, Vector3.One),
+            new JointPose(new Vector3(1, 0, 0), Quaternion.Identity, Vector3.One),
+        ]);
+
+    public static Skeleton BenchmarkSkeleton() => Skeleton.Load(Fixture("bench-skeleton.ozz"));
+
+    public static AnimationClip BenchmarkClip() => AnimationClip.Load(Fixture("bench-animation.ozz"));
+
+    /// <summary>
+    /// The closed form <c>bench-animation.ozz</c> was baked from, so a sampled pose can be checked
+    /// against ground truth rather than against another run of the same code. Keys were laid at
+    /// 30 Hz over the clip's 1.333 s; sampling exactly on one isolates quantization error from
+    /// interpolation error.
+    /// </summary>
+    public static JointPose BenchmarkSource(int track, float seconds)
     {
-        var raw = new RawSkeleton();
-        var hip = new RawJoint("hip") { Transform = new JointPose(new Vector3(0, 1, 0), Quaternion.Identity, Vector3.One) };
-        hip.Children.Add(new RawJoint("knee") { Transform = new JointPose(Vector3.Zero, QuarterTurnZ, Vector3.One) });
-        raw.Roots.Add(hip);
-        raw.Roots.Add(new RawJoint("prop"));
-        return SkeletonBuilder.Build(raw);
+        var a = track * 0.37f + seconds * 3.1f;
+        return new JointPose(
+            new Vector3(MathF.Sin(a) * 0.05f, 0.2f + MathF.Cos(a) * 0.02f, MathF.Sin(a * 0.5f) * 0.05f),
+            Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(0.3f, 1f, 0.2f)), MathF.Sin(a) * 0.6f),
+            new Vector3(1f + MathF.Sin(a) * 0.03f));
     }
 
-    /// <summary>A clip on the chain: one track per joint, keys given per joint and component.</summary>
-    public static RawAnimation Clip(string name, float duration, int trackCount, Action<RawTrack[]> fill)
-    {
-        var raw = new RawAnimation { Name = name, Duration = duration };
-        var tracks = new RawTrack[trackCount];
-        for (var i = 0; i < trackCount; i++)
-        {
-            tracks[i] = new RawTrack();
-            raw.Tracks.Add(tracks[i]);
-        }
-
-        fill(tracks);
-        return raw;
-    }
-
-    /// <summary>The generator behind <c>Fixtures/ozz-*.ozz</c>: the same LCG, the same call order as the C++ program that wrote them, so the raw input is bit-identical.</summary>
-    public static (RawSkeleton Skeleton, Func<int, RawAnimation> Clip) Parity(int joints = 37, int keys = 12)
-    {
-        var lcg = new Lcg(12345u);
-        var children = new List<int>[joints];
-        for (var i = 0; i < joints; i++) children[i] = [];
-        for (var i = 1; i < joints; i++) children[(i - 1) / 3].Add(i);
-
-        var raw = new RawSkeleton();
-        var root = new RawJoint("j0") { Transform = lcg.Pose() };
-        raw.Roots.Add(root);
-        Fill(root, 0, children, lcg);
-
-        return (raw, jointCount =>
-        {
-            var clip = new RawAnimation { Name = "parity", Duration = 2.5f };
-            for (var i = 0; i < jointCount; i++)
-            {
-                var track = new RawTrack();
-                var count = i % 5 == 0 ? 0 : i % 7 == 0 ? 1 : keys;
-                for (var k = 0; k < count; k++)
-                {
-                    var t = count == 1 ? 1.0f : clip.Duration * k / (keys - 1);
-                    var smooth = i % 3 == 1;
-                    track.Translations.Add(new TranslationKey(t, smooth ? new Vector3(t * .1f, 0f, 0f) : new Vector3(lcg.Unit(), lcg.Unit(), lcg.Unit())));
-                    track.Rotations.Add(new RotationKey(t, smooth ? Quaternion.Identity : new Quaternion(lcg.Unit(), lcg.Unit(), lcg.Unit(), lcg.Unit())));
-                    track.Scales.Add(new ScaleKey(t, new Vector3(1f + lcg.Unit() * .1f, 1f + lcg.Unit() * .1f, 1f + lcg.Unit() * .1f)));
-                }
-
-                clip.Tracks.Add(track);
-            }
-
-            return clip;
-        });
-    }
-
-    private static void Fill(RawJoint joint, int index, List<int>[] children, Lcg lcg)
-    {
-        foreach (var c in children[index])
-        {
-            var child = new RawJoint($"j{c}") { Transform = lcg.Pose() };
-            joint.Children.Add(child);
-            Fill(child, c, children, lcg);
-        }
-    }
-
-    private sealed class Lcg(uint seed)
-    {
-        private uint _state = seed;
-
-        public float Unit()
-        {
-            _state = _state * 1664525u + 1013904223u;
-            return (int)(_state % 20001u) / 10000.0f - 1.0f;
-        }
-
-        public JointPose Pose() => new(new Vector3(Unit(), Unit(), Unit()), new Quaternion(Unit(), Unit(), Unit(), Unit()), new Vector3(1f + Unit() * .1f, 1f + Unit() * .1f, 1f + Unit() * .1f));
-    }
+    public const int BenchmarkKeyCount = 40;
 
     public static byte[] Fixture(string name)
     {
@@ -108,5 +66,17 @@ internal static class TestRigs
         var max = 0f;
         foreach (var v in new[] { m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24, m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44 }) max = MathF.Max(max, MathF.Abs(v));
         return max;
+    }
+
+    /// <summary>Angle between two rotations, radians — the comparison that ignores the double cover.</summary>
+    public static float AngleBetween(Quaternion a, Quaternion b) =>
+        2f * MathF.Acos(Math.Clamp(MathF.Abs(Quaternion.Dot(Quaternion.Normalize(a), Quaternion.Normalize(b))), 0f, 1f));
+
+    /// <summary>A pose set whose every joint holds <paramref name="pose"/>.</summary>
+    public static SoaTransforms Uniform(int joints, JointPose pose)
+    {
+        var transforms = new SoaTransforms(joints);
+        for (var i = 0; i < joints; i++) transforms[i] = pose;
+        return transforms;
     }
 }

@@ -27,6 +27,7 @@ public sealed class Skeleton
     private readonly string[] _names;
     private readonly short[] _parents;
     private readonly JointPose[] _restPoses;
+    private readonly byte[][] _utf8Names;
 
     public Skeleton(string[] names, short[] parents, JointPose[] restPoses)
     {
@@ -50,7 +51,16 @@ public sealed class Skeleton
         _names = names;
         _parents = parents;
         _restPoses = restPoses;
+        RestPose = new SoaTransforms(restPoses.Length);
+        RestPose.CopyFrom(restPoses);
+        _utf8Names = new byte[names.Length][];
+        for (var i = 0; i < names.Length; i++) _utf8Names[i] = Encoding.UTF8.GetBytes(names[i]);
     }
+
+    /// <summary>The rest pose in ozz's structure-of-arrays layout — <c>joint_rest_poses()</c>. This is what <see cref="BlendingJob"/> takes as its reference pose and what <see cref="SkeletonUtils.RestPoseModelSpace"/> walks; the spare lanes of the last group hold identity.</summary>
+    public SoaTransforms RestPose { get; }
+
+    public int SoaJointCount => (JointCount + 3) / 4;
 
     public int JointCount => _names.Length;
 
@@ -60,8 +70,22 @@ public sealed class Skeleton
 
     public ReadOnlySpan<JointPose> RestPoses => _restPoses;
 
-    /// <summary>The first joint of that exact name, or −1.</summary>
+    /// <summary>The skeleton with no joints — ozz's default-constructed <c>Skeleton</c>, valid anywhere one is asked for.</summary>
+    public static Skeleton Empty { get; } = new([], [], []);
+
+    /// <summary>The first joint of that exact name, or −1. ozz's <c>FindJoint</c>.</summary>
     public int FindJoint(string name) => Array.IndexOf(_names, name);
+
+    /// <summary>The same lookup against a UTF-8 name, for a caller holding bytes rather than a string; allocation-free.</summary>
+    public int FindJoint(ReadOnlySpan<byte> utf8Name)
+    {
+        for (var i = 0; i < _utf8Names.Length; i++)
+        {
+            if (_utf8Names[i].AsSpan().SequenceEqual(utf8Name)) return i;
+        }
+
+        return -1;
+    }
 
     public bool IsLeaf(int joint)
     {

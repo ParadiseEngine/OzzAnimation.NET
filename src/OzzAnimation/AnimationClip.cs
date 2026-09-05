@@ -10,9 +10,9 @@ namespace OzzAnimation;
 /// </summary>
 /// <remarks>
 /// Reads and writes the <c>ozz-animation</c> archive, version 7 (ozz-animation 0.17). The layout is
-/// <see cref="Offline.AnimationBuilder"/>'s output and ozz's <c>AnimationBuilder</c>'s,
-/// byte for byte; <see cref="SamplingContext"/> is the reader. Track count is padded to a multiple
-/// of four in every stream, as ozz's SIMD sampler requires, so a file cooked here plays in ozz too.
+/// ozz's <c>offline::AnimationBuilder</c>'s output byte for byte; <see cref="SamplingContext"/> is
+/// the reader. Track count is padded to a multiple of four in every stream, as ozz's SIMD sampler
+/// requires, so a file written here plays in ozz too.
 /// </remarks>
 public sealed class AnimationClip
 {

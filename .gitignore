@@ -7,3 +7,5 @@ BenchmarkDotNet.Artifacts/
 .vs/
 .idea/
 .DS_Store
+
+bench/native/build/

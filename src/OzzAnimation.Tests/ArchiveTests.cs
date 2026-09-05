@@ -1,11 +1,9 @@
 using System.Numerics;
 
-using OzzAnimation.Offline;
-
 namespace OzzAnimation.Tests;
 
-/// <summary>Archives round-trip every field, and a foreign, big-endian or newer archive is refused by name.</summary>
-public class OzzArchiveTests
+/// <summary>Archives round-trip every field, and a foreign, big-endian or newer archive is refused by name rather than misread.</summary>
+public class ArchiveTests
 {
     [Test]
     public async Task a_skeleton_round_trips_in_depth_first_order()
@@ -15,12 +13,14 @@ public class OzzArchiveTests
         var read = Skeleton.Load(archive);
 
         await Assert.That(read.JointCount).IsEqualTo(3);
+        await Assert.That(read.SoaJointCount).IsEqualTo(1);
         await Assert.That(read.Names[0]).IsEqualTo("hip");
         await Assert.That(read.Names[2]).IsEqualTo("prop");
         await Assert.That(read.Parents.ToArray()).IsEquivalentTo(new short[] { -1, 0, -1 });
         await Assert.That(read.RestPoses[0].Translation).IsEqualTo(new Vector3(0, 1, 0));
         await Assert.That(read.RestPoses[1].Rotation).IsEqualTo(TestRigs.QuarterTurnZ);
         await Assert.That(read.FindJoint("knee")).IsEqualTo(1);
+        await Assert.That(read.FindJoint("knee"u8)).IsEqualTo(1);
         await Assert.That(read.FindJoint("toe")).IsEqualTo(-1);
         await Assert.That(read.IsLeaf(0)).IsFalse();
         await Assert.That(read.IsLeaf(1)).IsTrue();
@@ -29,34 +29,29 @@ public class OzzArchiveTests
     }
 
     [Test]
-    public async Task an_empty_skeleton_is_a_valid_archive()
+    public async Task the_soa_rest_pose_and_the_joint_array_agree()
     {
-        var empty = SkeletonBuilder.Build(new RawSkeleton());
+        var skeleton = TestRigs.BenchmarkSkeleton();
 
-        await Assert.That(Skeleton.Load(empty.Save()).JointCount).IsEqualTo(0);
+        for (var i = 0; i < skeleton.JointCount; i++)
+        {
+            await Assert.That(skeleton.RestPose[i]).IsEqualTo(skeleton.RestPoses[i]);
+        }
+
+        // The spare lanes of the last group hold identity, which is what keeps a blend or a
+        // hierarchy walk from reading rubbish out of the padding.
+        var lastGroup = skeleton.SoaJointCount - 1;
+        for (var lane = skeleton.JointCount - lastGroup * 4; lane < 4; lane++)
+        {
+            await Assert.That(skeleton.RestPose.Rotations[lastGroup].W[lane]).IsEqualTo(1f);
+            await Assert.That(skeleton.RestPose.Scales[lastGroup].X[lane]).IsEqualTo(1f);
+        }
     }
 
     [Test]
-    public async Task a_clip_round_trips_with_its_name_duration_and_streams()
+    public async Task an_empty_skeleton_is_a_valid_archive()
     {
-        var skeleton = TestRigs.Chain();
-        var raw = TestRigs.Clip("Walk", 2f, skeleton.JointCount, tracks =>
-        {
-            tracks[1].Rotations.Add(new RotationKey(0f, Quaternion.Identity));
-            tracks[1].Rotations.Add(new RotationKey(2f, TestRigs.QuarterTurnZ));
-        });
-        var built = AnimationBuilder.Build(raw, iframeInterval: 1f);
-
-        var bytes = built.Save();
-        var read = AnimationClip.Load(bytes);
-
-        await Assert.That(read.Name).IsEqualTo("Walk");
-        await Assert.That(read.Duration).IsEqualTo(2f);
-        await Assert.That(read.TrackCount).IsEqualTo(3);
-        await Assert.That(read.Timepoints).IsEquivalentTo(new[] { 0f, 1f });
-        await Assert.That(read.Rotations.KeyCount).IsEqualTo(AnimationClip.PaddedTrackCount(3) * 2);
-        await Assert.That(read.Save()).IsEquivalentTo(bytes);
-        await Assert.That(AnimationClip.IsAnimation(bytes)).IsTrue();
+        await Assert.That(Skeleton.Load(Skeleton.Empty.Save()).JointCount).IsEqualTo(0);
     }
 
     [Test]
@@ -86,5 +81,20 @@ public class OzzArchiveTests
         var error = await Assert.That(() => new Skeleton(["a", "b"], [1, -1], [JointPose.Identity, JointPose.Identity])).Throws<ArgumentException>();
 
         await Assert.That(error!.Message).Contains("depth-first");
+    }
+
+    [Test]
+    public async Task keyframes_can_be_counted_per_track_and_in_total()
+    {
+        var clip = TestRigs.BenchmarkClip();
+
+        var total = AnimationUtils.CountTranslationKeyframes(clip);
+        var first = AnimationUtils.CountTranslationKeyframes(clip, 0);
+
+        await Assert.That(total).IsEqualTo(clip.Translations.KeyCount);
+        // Every track was baked with the same key count, and the builder adds none here.
+        await Assert.That(first).IsEqualTo(TestRigs.BenchmarkKeyCount + 1);
+        await Assert.That(AnimationUtils.CountRotationKeyframes(clip, 3)).IsEqualTo(TestRigs.BenchmarkKeyCount + 1);
+        await Assert.That(AnimationUtils.CountScaleKeyframes(clip)).IsEqualTo(clip.Scales.KeyCount);
     }
 }

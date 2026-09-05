@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="src/OzzAnimation/OzzAnimation.csproj" />
   <Project Path="src/OzzAnimation.Tests/OzzAnimation.Tests.csproj" />
+  <Project Path="src/OzzAnimation.Benchmarks/OzzAnimation.Benchmarks.csproj" />
 </Solution>

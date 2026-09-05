@@ -1,82 +1,99 @@
 using System.Numerics;
 
-using OzzAnimation.Offline;
-
 namespace OzzAnimation.Tests;
 
 /// <summary>
-/// The format contract with ozz-animation 0.17, held as bytes: archives its own C++ builders wrote
-/// from a procedural rig load here, and this assembly's builders write the same bytes from the
-/// same raw input. The rest pose is compared within one float ulp rather than byte for byte
-/// because ozz's arm64 build fuses multiply-adds (in the generator's <c>1 + x * 0.1</c> and in
-/// its quaternion normalization); the clip is exact because quantization absorbs that.
+/// The format contract with ozz-animation 0.17, held as bytes. <c>ozz-skeleton.ozz</c> and
+/// <c>ozz-animation.ozz</c> were written by ozz's own C++ builders from a procedural rig; loading
+/// one here and saving it again must reproduce the file exactly, which pins every field's size,
+/// order and encoding — the header counts, the SoA rest-pose groups, the keyframe streams, the
+/// group-varint i-frames. A reader that got any of them wrong would round-trip differently.
 /// </summary>
 public class OzzParityTests
 {
     [Test]
-    public async Task the_skeleton_builder_matches_ozz_within_an_ulp()
+    public async Task a_skeleton_ozz_wrote_round_trips_byte_for_byte()
     {
-        var (raw, _) = TestRigs.Parity();
-        var ours = SkeletonBuilder.Build(raw);
-        var theirs = Skeleton.Load(TestRigs.Fixture("ozz-skeleton.ozz"));
+        var bytes = TestRigs.Fixture("ozz-skeleton.ozz");
 
-        await Assert.That(ours.JointCount).IsEqualTo(theirs.JointCount);
-        await Assert.That(ours.Parents.ToArray()).IsEquivalentTo(theirs.Parents.ToArray());
-        for (var i = 0; i < ours.JointCount; i++)
-        {
-            var mine = ours.RestPoses[i];
-            var reference = theirs.RestPoses[i];
-            await Assert.That(ours.Names[i]).IsEqualTo(theirs.Names[i]);
-            await Assert.That(mine.Translation).IsEqualTo(reference.Translation);
-            await Assert.That(Vector3.Distance(mine.Scale, reference.Scale)).IsLessThanOrEqualTo(2e-7f);
-            var rotation = mine.Rotation - reference.Rotation;
-            await Assert.That(MathF.Max(MathF.Max(MathF.Abs(rotation.X), MathF.Abs(rotation.Y)), MathF.Max(MathF.Abs(rotation.Z), MathF.Abs(rotation.W)))).IsLessThanOrEqualTo(2e-7f);
-        }
+        var skeleton = Skeleton.Load(bytes);
 
-        // Loading ozz's bytes and saving them again is the identity.
-        await Assert.That(theirs.Save()).IsEquivalentTo(TestRigs.Fixture("ozz-skeleton.ozz"));
+        await Assert.That(skeleton.JointCount).IsEqualTo(37);
+        await Assert.That(skeleton.Names[0]).IsEqualTo("j0");
+        await Assert.That(skeleton.Parents[0]).IsEqualTo(Skeleton.NoParent);
+        await Assert.That(skeleton.Save()).IsEquivalentTo(bytes);
     }
 
     [Test]
-    public async Task the_animation_builder_writes_the_bytes_ozz_writes()
+    public async Task a_clip_ozz_wrote_round_trips_byte_for_byte()
     {
-        var (_, clip) = TestRigs.Parity();
-        var built = AnimationBuilder.Build(clip(37), iframeInterval: 0.5f);
+        var bytes = TestRigs.Fixture("ozz-animation.ozz");
 
-        var ours = built.Save();
+        var clip = AnimationClip.Load(bytes);
 
-        await Assert.That(ours).IsEquivalentTo(TestRigs.Fixture("ozz-animation.ozz"));
-        await Assert.That(AnimationClip.Load(ours).Save()).IsEquivalentTo(ours);
+        await Assert.That(clip.Name).IsEqualTo("parity");
+        await Assert.That(clip.Duration).IsEqualTo(2.5f);
+        await Assert.That(clip.TrackCount).IsEqualTo(37);
+        await Assert.That(clip.Rotations.IframeDesc.Length).IsEqualTo(2 * 5);
+        await Assert.That(clip.Save()).IsEquivalentTo(bytes);
     }
 
     [Test]
-    public async Task the_optimizer_keeps_the_keys_ozz_keeps()
+    public async Task an_optimized_clip_ozz_wrote_round_trips_byte_for_byte()
     {
-        var (_, clip) = TestRigs.Parity();
-        var skeleton = Skeleton.Load(TestRigs.Fixture("ozz-skeleton.ozz"));
+        var bytes = TestRigs.Fixture("ozz-animation-optimized.ozz");
 
-        var optimized = AnimationOptimizer.Optimize(clip(37), skeleton, AnimationOptimizer.Setting.Default);
-        var built = AnimationBuilder.Build(optimized, iframeInterval: 0.5f);
+        var clip = AnimationClip.Load(bytes);
 
-        await Assert.That(built.Save()).IsEquivalentTo(TestRigs.Fixture("ozz-animation-optimized.ozz"));
+        // The optimizer dropped keys, so this file exercises a different stream shape than the
+        // unoptimized one: fewer keys, different back-link distances, a different ratio width.
+        await Assert.That(clip.TrackCount).IsEqualTo(37);
+        await Assert.That(clip.Translations.KeyCount).IsLessThan(AnimationClip.Load(TestRigs.Fixture("ozz-animation.ozz")).Translations.KeyCount);
+        await Assert.That(clip.Save()).IsEquivalentTo(bytes);
     }
 
     [Test]
-    public async Task an_archive_ozz_wrote_samples_here()
+    public async Task an_archive_ozz_wrote_samples_to_finite_normalized_poses()
     {
         var skeleton = Skeleton.Load(TestRigs.Fixture("ozz-skeleton.ozz"));
         var clip = AnimationClip.Load(TestRigs.Fixture("ozz-animation.ozz"));
         var context = new SamplingContext(clip.TrackCount);
         var poses = new SoaTransforms(clip.TrackCount);
 
-        await Assert.That(clip.Name).IsEqualTo("parity");
-        await Assert.That(clip.Duration).IsEqualTo(2.5f);
         await Assert.That(clip.TrackCount).IsEqualTo(skeleton.JointCount);
-        await Assert.That(clip.Rotations.IframeDesc.Length).IsEqualTo(2 * 5);
         foreach (var ratio in new[] { 0f, 0.3f, 0.9f, 0.1f, 1f })
         {
             context.Sample(clip, ratio, poses);
-            foreach (var pose in poses.ToArray()) await Assert.That(float.IsFinite(pose.Rotation.Length())).IsTrue();
+            foreach (var pose in poses.ToArray())
+            {
+                await Assert.That(MathF.Abs(pose.Rotation.Length() - 1f)).IsLessThan(1e-4f);
+                await Assert.That(float.IsFinite(pose.Translation.X + pose.Translation.Y + pose.Translation.Z)).IsTrue();
+            }
+        }
+    }
+
+    [Test]
+    public async Task the_sampler_reproduces_the_curve_the_clip_was_baked_from()
+    {
+        // Ground truth, not a second run of the same code: bench-animation.ozz was baked from a
+        // closed-form curve, so this checks the whole decode path — timepoints, back-links,
+        // half-float and 15-bit quaternion unpacking — against what it should be.
+        var clip = TestRigs.BenchmarkClip();
+        var context = new SamplingContext(clip.TrackCount);
+        var poses = new SoaTransforms(clip.TrackCount);
+
+        foreach (var key in new[] { 0, 7, 20, TestRigs.BenchmarkKeyCount })
+        {
+            var ratio = (float)key / TestRigs.BenchmarkKeyCount;
+            context.Sample(clip, ratio, poses);
+            for (var track = 0; track < clip.TrackCount; track++)
+            {
+                var expected = TestRigs.BenchmarkSource(track, ratio * clip.Duration);
+                var actual = poses[track];
+                await Assert.That(Vector3.Distance(actual.Translation, expected.Translation)).IsLessThan(1e-3f);
+                await Assert.That(Vector3.Distance(actual.Scale, expected.Scale)).IsLessThan(1e-3f);
+                await Assert.That(TestRigs.AngleBetween(actual.Rotation, expected.Rotation)).IsLessThan(1e-3f);
+            }
         }
     }
 }

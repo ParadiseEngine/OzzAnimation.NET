@@ -8,7 +8,19 @@ public static class LocalToModel
 {
     /// <summary>Row-vector convention: <c>model[i] = local[i] × model[parent]</c>, roots multiplied by <paramref name="root"/> (identity when null).</summary>
     /// <exception cref="ArgumentException">Fewer poses or outputs than joints.</exception>
-    public static void Compute(Skeleton skeleton, SoaTransforms locals, Span<Matrix4x4> models, in Matrix4x4? root = null)
+    public static void Compute(Skeleton skeleton, SoaTransforms locals, Span<Matrix4x4> models, in Matrix4x4? root = null) =>
+        Compute(skeleton, locals, models, Skeleton.NoParent, Skeleton.MaxJoints, false, root);
+
+    /// <summary>
+    /// The same walk restricted to part of the hierarchy — ozz's <c>from</c>, <c>to</c> and
+    /// <c>from_excluded</c>. Updating only the arm below a shoulder an IK job just moved costs a
+    /// few joints instead of the whole skeleton.
+    /// </summary>
+    /// <param name="from">Joint the walk starts at; <see cref="Skeleton.NoParent"/> for the whole hierarchy. Its parent's model matrix must already be valid.</param>
+    /// <param name="to">Last joint updated, inclusive. The walk stops earlier if it leaves <paramref name="from"/>'s subtree.</param>
+    /// <param name="fromExcluded">Skip <paramref name="from"/> itself and update only its descendants — for propagating a model-space matrix that was set directly rather than derived from a local pose.</param>
+    /// <exception cref="ArgumentException">Fewer poses or outputs than joints.</exception>
+    public static void Compute(Skeleton skeleton, SoaTransforms locals, Span<Matrix4x4> models, int from, int to, bool fromExcluded, in Matrix4x4? root = null)
     {
         ArgumentNullException.ThrowIfNull(skeleton);
         ArgumentNullException.ThrowIfNull(locals);
@@ -22,13 +34,20 @@ public static class LocalToModel
         var rotations = locals.Rotations.AsSpan();
         var scales = locals.Scales.AsSpan();
         Span<float> rows = stackalloc float[48];
-        for (var g = 0; g * 4 < count; g++)
+
+        var end = Math.Min(to + 1, count);
+        var joint = Math.Max(from + (fromExcluded ? 1 : 0), 0);
+        // parents[joint] >= from holds exactly as long as joint is still inside from's subtree.
+        var process = joint < end && (!fromExcluded || parents[joint] >= from);
+        while (process)
         {
+            // A whole group of four is built at once even when only some of its lanes are wanted;
+            // the lane loop below is what decides which of them are written.
+            var g = joint / 4;
             AffineRows(in translations[g], in rotations[g], in scales[g], rows);
-            var lanes = Math.Min(4, count - g * 4);
-            for (var lane = 0; lane < lanes; lane++)
+            for (var groupEnd = (joint + 4) & ~3; joint < groupEnd && process; joint++, process = joint < end && parents[joint] >= from)
             {
-                var joint = g * 4 + lane;
+                var lane = joint & 3;
                 var local = new Matrix4x4(
                     rows[lane], rows[4 + lane], rows[8 + lane], 0f,
                     rows[12 + lane], rows[16 + lane], rows[20 + lane], 0f,
