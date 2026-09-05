@@ -54,6 +54,40 @@ public class TrackTests
     }
 
     [Test]
+    public async Task every_track_type_interpolates_and_reports_its_own_identity()
+    {
+        var float2 = new Float2Track([0f, 1f], [Vector2.Zero, new Vector2(10, 20)], [0]);
+        var float3 = new Float3Track([0f, 1f], [Vector3.Zero, new Vector3(10, 20, 30)], [0]);
+        var float4 = new Float4Track([0f, 1f], [Vector4.Zero, new Vector4(10, 20, 30, 40)], [0]);
+
+        await Assert.That(float2.Sample(0.5f)).IsEqualTo(new Vector2(5, 10));
+        await Assert.That(float3.Sample(0.5f)).IsEqualTo(new Vector3(5, 10, 15));
+        await Assert.That(float4.Sample(0.5f)).IsEqualTo(new Vector4(5, 10, 15, 20));
+        await Assert.That(float2.Identity).IsEqualTo(Vector2.Zero);
+        await Assert.That(float4.Identity).IsEqualTo(Vector4.Zero);
+        await Assert.That(new Float2Track([], [], []).Sample(0.5f)).IsEqualTo(Vector2.Zero);
+        await Assert.That(new Float4Track([], [], []).Sample(0.5f)).IsEqualTo(Vector4.Zero);
+    }
+
+    [Test]
+    public async Task each_track_type_recognizes_only_its_own_archive()
+    {
+        var floats = new FloatTrack([0f, 1f], [1f, 2f], [0]).Save();
+        var float2 = new Float2Track([0f, 1f], [Vector2.Zero, Vector2.One], [0]).Save();
+        var float3 = new Float3Track([0f, 1f], [Vector3.Zero, Vector3.One], [0]).Save();
+        var float4 = new Float4Track([0f, 1f], [Vector4.Zero, Vector4.One], [0]).Save();
+        var quaternions = new QuaternionTrack([0f, 1f], [Quaternion.Identity, TestRigs.QuarterTurnZ], [0]).Save();
+
+        await Assert.That(Float2Track.IsTrack(float2)).IsTrue();
+        await Assert.That(Float3Track.IsTrack(float3)).IsTrue();
+        await Assert.That(Float4Track.IsTrack(float4)).IsTrue();
+        await Assert.That(QuaternionTrack.IsTrack(quaternions)).IsTrue();
+        await Assert.That(Float2Track.IsTrack(floats)).IsFalse();
+        await Assert.That(Float4Track.IsTrack(float3)).IsFalse();
+        await Assert.That(QuaternionTrack.IsTrack(float4)).IsFalse();
+    }
+
+    [Test]
     public async Task every_track_type_round_trips_through_its_archive()
     {
         var floats = new FloatTrack([0f, 1f], [1f, 2f], [0b01], "intensity");
@@ -160,6 +194,18 @@ public class TrackTriggeringTests
 
         // -1 → 1 over ratios 0 → 0.5 reaches 0.5 at three quarters of the way.
         await Assert.That(edges.Single(e => e.Rising).Ratio).IsEqualTo(0.375f).Within(1e-6f);
+    }
+
+    [Test]
+    public async Task a_stepped_key_puts_the_crossing_at_the_later_key()
+    {
+        // A stepped key does not ramp, so the value jumps at the next key's ratio rather than
+        // crossing somewhere between the two.
+        var stepped = new FloatTrack([0f, 0.5f], [-1f, 1f], [0b01]);
+
+        var rising = TrackTriggering.Edges(stepped, 0f, 1f).Single(e => e.Rising);
+
+        await Assert.That(rising.Ratio).IsEqualTo(0.5f).Within(1e-6f);
     }
 
     [Test]

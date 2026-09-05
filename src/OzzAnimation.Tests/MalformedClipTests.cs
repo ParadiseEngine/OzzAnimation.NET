@@ -12,17 +12,10 @@ public class MalformedClipTests
 
     private static readonly float[] Timepoints = [0f, 1f];
 
-    /// <summary>Eight keys over four tracks: a first key at ratio 0 and a last at ratio 1 for each, which is the minimum a stream may hold.</summary>
     private static KeyframeStream Stream(byte[]? ratios = null, ushort[]? previouses = null, byte[]? iframeEntries = null, uint[]? iframeDesc = null, float iframeInterval = 1f) =>
-        new(ratios ?? [0, 0, 0, 0, 1, 1, 1, 1],
-            previouses ?? [0, 0, 0, 0, 4, 4, 4, 4],
-            new ushort[8 * 3],
-            iframeEntries ?? [],
-            iframeDesc ?? [],
-            iframeInterval);
+        TestRigs.Stream(ratios, previouses, iframeEntries, iframeDesc, iframeInterval);
 
-    private static AnimationClip Clip(KeyframeStream translations) =>
-        new("clip", 1f, Tracks, Timepoints, translations, Stream(), Stream());
+    private static AnimationClip Clip(KeyframeStream translations) => TestRigs.ClipOf(translations);
 
     [Test]
     public async Task a_well_formed_clip_is_accepted()
@@ -88,6 +81,19 @@ public class MalformedClipTests
         var error = await Assert.That(() => Clip(short_)).Throws<ArgumentException>();
 
         await Assert.That(error!.Message).Contains("needs a first and a last key");
+    }
+
+    [Test]
+    public async Task an_archive_header_carrying_a_negative_count_is_refused()
+    {
+        // Every count in the header is used to size a read, so a negative one must not reach one.
+        var bytes = Clip(Stream()).Save();
+        var nameLengthAt = 1 + AnimationClip.Tag.Length + 1 + 4 + 4 + 4;
+        BitConverter.TryWriteBytes(bytes.AsSpan(nameLengthAt), -1);
+
+        var error = await Assert.That(() => AnimationClip.Load(bytes)).Throws<InvalidDataException>();
+
+        await Assert.That(error!.Message).Contains("negative count");
     }
 
     [Test]

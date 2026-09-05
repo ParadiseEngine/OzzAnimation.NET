@@ -14,7 +14,34 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - run: dotnet build OzzAnimation.NET.slnx -c Release
-      - run: dotnet run --project src/OzzAnimation.Tests -c Release
+      - name: Test with coverage
+        run: >
+          dotnet run --project src/OzzAnimation.Tests -c Release --
+          --coverage --coverage-output-format cobertura --coverage-output coverage.cobertura.xml
+
+      # Reported, not gated: a threshold that fails the build turns every unrelated change into a
+      # coverage argument. The number is here so a drop is visible in the log.
+      - name: Report coverage
+        shell: bash
+        run: |
+          report=$(find src -name coverage.cobertura.xml | head -1)
+          python3 - "$report" <<'EOF'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          hit = tot = 0
+          for cls in root.iter("class"):
+              if "OzzAnimation.Tests" in (cls.get("filename") or ""): continue
+              for line in cls.iter("line"):
+                  tot += 1
+                  hit += 1 if int(line.get("hits")) else 0
+          print(f"::notice::Line coverage {hit}/{tot} = {100.0 * hit / tot:.1f}%")
+          EOF
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: src/**/coverage.cobertura.xml
       - run: dotnet pack src/OzzAnimation/OzzAnimation.csproj -c Release -o artifacts
       - uses: actions/upload-artifact@v4
         with:

@@ -258,6 +258,65 @@ public class IKTests
     }
 
     [Test]
+    public async Task a_two_bone_twist_spins_the_chain_plane_without_moving_the_end_joint()
+    {
+        var target = new Vector3(1f, 1f, 0f);
+        var (skeleton, locals, models) = Arm();
+        var job = new IKTwoBoneJob
+        {
+            Target = target,
+            MidAxis = Vector3.UnitZ,
+            PoleVector = Vector3.UnitY,
+            StartJoint = models[0],
+            MidJoint = models[1],
+            EndJoint = models[2],
+        };
+        var twisted = job with { TwistAngle = MathF.PI / 3f };
+
+        job.Run(out var plainStart, out _, out _);
+        twisted.Run(out var twistedStart, out var twistedMid, out var reached);
+
+        await Assert.That(reached).IsTrue();
+        // The plane the elbow sits in has rotated...
+        await Assert.That(TestRigs.AngleBetween(plainStart, twistedStart)).IsGreaterThan(0.1f);
+        // ...but the wrist still lands on the target, because the twist is about the start-to-target axis.
+        ApplyCorrection(locals, 0, twistedStart);
+        ApplyCorrection(locals, 1, twistedMid);
+        LocalToModel.Compute(skeleton, locals, models);
+        await Assert.That(Vector3.Distance(models[2].Translation, target)).IsLessThan(1e-4f);
+    }
+
+    [Test]
+    public async Task aiming_at_a_target_directly_behind_picks_an_arbitrary_perpendicular_axis()
+    {
+        // Exactly opposed vectors have no unique rotation between them, so any perpendicular axis
+        // will do. Both of the two branches that choose one are exercised here: the first when the
+        // forward axis leans along X, the second when it leans along Z.
+        foreach (var (forward, target) in new[]
+                 {
+                     (Vector3.UnitX, new Vector3(-5, 0, 0)),
+                     (Vector3.UnitZ, new Vector3(0, 0, -5)),
+                 })
+        {
+            var job = new IKAimJob
+            {
+                Target = target,
+                Forward = forward,
+                Up = Vector3.UnitY,
+                PoleVector = Vector3.UnitY,
+                Joint = Matrix4x4.Identity,
+            };
+
+            var ran = job.Run(out var correction, out var reached);
+
+            await Assert.That(ran).IsTrue();
+            await Assert.That(reached).IsTrue();
+            var aimed = Vector3.Transform(forward, correction);
+            await Assert.That(Vector3.Distance(aimed, Vector3.Normalize(target))).IsLessThan(1e-4f);
+        }
+    }
+
+    [Test]
     public async Task ik_allocates_nothing()
     {
         var (_, _, models) = Arm();

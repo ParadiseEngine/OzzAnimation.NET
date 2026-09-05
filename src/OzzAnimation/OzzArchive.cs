@@ -87,6 +87,9 @@ internal ref struct OzzReader
             return;
         }
 
+        // Unreachable on every platform .NET currently supports, and so uncovered by the tests.
+        // It stays because deleting it would not make the code faster, only wrong on a host where
+        // the reinterpret above does not hold.
         for (var i = 0; i < destination.Length; i++) destination[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(i * sizeof(float), sizeof(float))));
     }
 
@@ -163,6 +166,7 @@ internal sealed class OzzWriter
             return;
         }
 
+        // As in ReadSingles: a big-endian host cannot reinterpret, and no test can reach this.
         foreach (var value in values) Write(value);
     }
 
@@ -184,32 +188,13 @@ internal sealed class OzzWriter
     public byte[] ToArray() => _stream.ToArray();
 }
 
-/// <summary>ozz's group-varint coding of uint32 quadruples (<c>ozz/base/encode/group_varint.h</c>): one prefix byte holding four 2-bit lengths, then 1–4 bytes per value.</summary>
+/// <summary>
+/// ozz's group-varint coding of uint32 quadruples (<c>ozz/base/encode/group_varint.h</c>): one
+/// prefix byte holding four 2-bit lengths, then 1–4 bytes per value. Only decoding is here — an
+/// i-frame is read by the sampler and written by the offline builder, which this runtime is not.
+/// </summary>
 internal static class GroupVarint
 {
-    public static int WorstEncodedSize(int count) => count * 4 + count / 4;
-
-    /// <summary>Encodes a stream whose length is a multiple of four; returns the bytes actually used.</summary>
-    public static byte[] Encode(ReadOnlySpan<uint> values)
-    {
-        if (values.Length % 4 != 0) throw new ArgumentException("A group-varint stream holds a multiple of four values.", nameof(values));
-        var buffer = new byte[WorstEncodedSize(values.Length)];
-        var at = 0;
-        for (var i = 0; i < values.Length; i += 4)
-        {
-            var tags = new byte[4];
-            for (var k = 0; k < 4; k++) tags[k] = Tag(values[i + k]);
-            buffer[at++] = (byte)((tags[3] << 6) | (tags[2] << 4) | (tags[1] << 2) | tags[0]);
-            for (var k = 0; k < 4; k++)
-            {
-                var value = values[i + k];
-                for (var b = 0; b <= tags[k]; b++) buffer[at++] = (byte)(value >> (8 * b));
-            }
-        }
-
-        return buffer[..at];
-    }
-
     /// <summary>Decodes <paramref name="output"/>.Length values (a multiple of four) starting at <paramref name="offset"/>.</summary>
     public static void Decode(ReadOnlySpan<byte> encoded, int offset, Span<uint> output)
     {
@@ -231,38 +216,4 @@ internal static class GroupVarint
         }
     }
 
-    private static byte Tag(uint value) => (byte)((value >= 1u << 24 ? 1 : 0) + (value >= 1u << 16 ? 1 : 0) + (value >= 1u << 8 ? 1 : 0));
-}
-
-/// <summary>
-/// ozz's float↔half conversion, bit for bit (<c>simd_math_ref-inl.h</c>): it rounds half-way cases
-/// up, where <see cref="System.Half"/> rounds them to even, and a cooked key must hold the bytes
-/// ozz's own builder would write.
-/// </summary>
-internal static class HalfFloat
-{
-    public static ushort FromSingle(float value)
-    {
-        const uint f32Infinity = 255u << 23;
-        const uint f16Infinity = 31u << 23;
-        const uint magic = 15u << 23;
-        const uint signMask = 0x80000000u;
-        const uint roundMask = ~0x00000fffu;
-
-        var bits = (uint)BitConverter.SingleToInt32Bits(value);
-        var sign = bits & signMask;
-        var unsigned = bits & ~signMask;
-        if (unsigned >= f32Infinity)
-        {
-            return (ushort)((unsigned > f32Infinity ? 0x7e00u : 0x7c00u) | (sign >> 16));
-        }
-
-        var rounded = BitConverter.UInt32BitsToSingle(unsigned & roundMask);
-        var scaled = (uint)BitConverter.SingleToInt32Bits(rounded * BitConverter.UInt32BitsToSingle(magic));
-        var reRounded = scaled - roundMask;
-        return (ushort)(((reRounded > f16Infinity ? f16Infinity : reRounded) >> 13) | (sign >> 16));
-    }
-
-    /// <summary>Every half is exactly representable as a float, so the framework conversion is the same bits ozz's is.</summary>
-    public static float ToSingle(ushort half) => (float)BitConverter.UInt16BitsToHalf(half);
 }

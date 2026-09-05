@@ -173,7 +173,17 @@ dotnet build OzzAnimation.NET.slnx
 dotnet run --project src/OzzAnimation.Tests -c Release
 ```
 
-Targets `net10.0`.
+Targets `net10.0`. With coverage:
+
+```bash
+dotnet run --project src/OzzAnimation.Tests -c Release -- \
+  --coverage --coverage-output-format cobertura --coverage-output coverage.cobertura.xml
+```
+
+93 tests cover 99.7% of the library's lines. The four that remain are the byte-swapping fallbacks
+for a big-endian host, which no supported .NET platform is — they stay because deleting them would
+not make anything faster, only wrong somewhere the reinterpreting fast path does not hold. CI
+reports the number on every push but does not gate on it.
 
 ## Releasing
 

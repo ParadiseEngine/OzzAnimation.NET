@@ -175,42 +175,6 @@ public sealed class SoaTransforms
         source.Scales.CopyTo(Scales, 0);
     }
 
-    /// <summary>Per lane: lerp translation and scale, normalized lerp of rotations on the short arc — the same interpolation the sampler uses between keys.</summary>
-    public static void Blend(SoaTransforms from, SoaTransforms to, float weight, SoaTransforms output)
-    {
-        ArgumentNullException.ThrowIfNull(from);
-        ArgumentNullException.ThrowIfNull(to);
-        ArgumentNullException.ThrowIfNull(output);
-        var groups = from.GroupCount;
-        if (to.GroupCount != groups || output.GroupCount != groups) throw new ArgumentException("The poses and the output must be sized for the same joint count.");
-        var w = Vector128.Create(weight);
-        var signBit = Vector128.Create(unchecked((int)0x80000000)).AsSingle();
-        var fromT = from.Translations.AsSpan(); var toT = to.Translations.AsSpan(); var outT = output.Translations.AsSpan();
-        var fromR = from.Rotations.AsSpan(); var toR = to.Rotations.AsSpan(); var outR = output.Rotations.AsSpan();
-        var fromS = from.Scales.AsSpan(); var toS = to.Scales.AsSpan(); var outS = output.Scales.AsSpan();
-        for (var g = 0; g < groups; g++)
-        {
-            ref readonly var at = ref fromT[g]; ref readonly var bt = ref toT[g]; ref var ot = ref outT[g];
-            ot.X = (bt.X - at.X) * w + at.X;
-            ot.Y = (bt.Y - at.Y) * w + at.Y;
-            ot.Z = (bt.Z - at.Z) * w + at.Z;
-
-            ref readonly var ar = ref fromR[g]; ref readonly var br = ref toR[g]; ref var or = ref outR[g];
-            var flip = (ar.X * br.X + ar.Y * br.Y + ar.Z * br.Z + ar.W * br.W) & signBit;
-            var x = ((br.X ^ flip) - ar.X) * w + ar.X;
-            var y = ((br.Y ^ flip) - ar.Y) * w + ar.Y;
-            var z = ((br.Z ^ flip) - ar.Z) * w + ar.Z;
-            var v = ((br.W ^ flip) - ar.W) * w + ar.W;
-            var inverseLength = Vector128<float>.One / Vector128.Sqrt(x * x + y * y + z * z + v * v);
-            or.X = x * inverseLength; or.Y = y * inverseLength; or.Z = z * inverseLength; or.W = v * inverseLength;
-
-            ref readonly var asc = ref fromS[g]; ref readonly var bs = ref toS[g]; ref var os = ref outS[g];
-            os.X = (bs.X - asc.X) * w + asc.X;
-            os.Y = (bs.Y - asc.Y) * w + asc.Y;
-            os.Z = (bs.Z - asc.Z) * w + asc.Z;
-        }
-    }
-
     private void Check(int joint)
     {
         if (joint < 0 || joint >= JointCount) throw new ArgumentOutOfRangeException(nameof(joint), $"Joint {joint} of {JointCount}.");

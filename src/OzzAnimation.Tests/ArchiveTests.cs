@@ -77,6 +77,70 @@ public class ArchiveTests
     }
 
     [Test]
+    public async Task a_skeleton_whose_arrays_disagree_is_refused()
+    {
+        var twoPoses = TestRigs.Pose(JointPose.Identity, JointPose.Identity);
+
+        var fewerParents = await Assert.That(() => new Skeleton(["a", "b"], [Skeleton.NoParent], twoPoses)).Throws<ArgumentException>();
+        await Assert.That(fewerParents!.Message).Contains("do not describe one skeleton");
+
+        var fewerPoses = await Assert.That(() => new Skeleton(["a", "b"], [Skeleton.NoParent, 0], TestRigs.Pose(JointPose.Identity))).Throws<ArgumentException>();
+        await Assert.That(fewerPoses!.Message).Contains("do not describe one skeleton");
+    }
+
+    [Test]
+    public async Task a_skeleton_archive_whose_parent_follows_its_child_is_refused_on_read()
+    {
+        // The constructor guards this, but so must the reader: the hierarchy walk assumes a parent
+        // is already in model space by the time its child is reached.
+        var skeleton = TestRigs.Chain();
+        var bytes = skeleton.Save();
+        var nameBlock = 0;
+        foreach (var name in skeleton.Names.ToArray()) nameBlock += name.Length + 1;
+        var parentsAt = 1 + Skeleton.Tag.Length + 1 + 4 + 4 + 4 + nameBlock;
+        BitConverter.TryWriteBytes(bytes.AsSpan(parentsAt), (short)2);
+
+        var error = await Assert.That(() => Skeleton.Load(bytes)).Throws<InvalidDataException>();
+
+        await Assert.That(error!.Message).Contains("does not precede it");
+    }
+
+    [Test]
+    public async Task a_skeleton_archive_with_an_unterminated_or_short_name_block_is_refused()
+    {
+        var skeleton = TestRigs.Chain();
+        var bytes = skeleton.Save();
+        var charCountAt = 1 + Skeleton.Tag.Length + 1 + 4 + 4;
+
+        var tooShort = (byte[])bytes.Clone();
+        BitConverter.TryWriteBytes(tooShort.AsSpan(charCountAt), 1);
+        var shortBlock = await Assert.That(() => Skeleton.Load(tooShort)).Throws<InvalidDataException>();
+        await Assert.That(shortBlock!.Message).Contains("shorter than one terminator per joint");
+
+        // Every terminator overwritten, so the first name never ends.
+        var unterminated = (byte[])bytes.Clone();
+        for (var i = charCountAt + 4; i < charCountAt + 4 + 14; i++)
+        {
+            if (unterminated[i] == 0) unterminated[i] = (byte)'x';
+        }
+
+        var noTerminator = await Assert.That(() => Skeleton.Load(unterminated)).Throws<InvalidDataException>();
+        await Assert.That(noTerminator!.Message).Contains("is not terminated");
+    }
+
+    [Test]
+    public async Task a_skeleton_naming_more_joints_than_ozz_allows_is_refused()
+    {
+        var bytes = TestRigs.Chain().Save();
+        var countAt = 1 + Skeleton.Tag.Length + 1 + 4;
+        BitConverter.TryWriteBytes(bytes.AsSpan(countAt), Skeleton.MaxJoints + 1);
+
+        var error = await Assert.That(() => Skeleton.Load(bytes)).Throws<InvalidDataException>();
+
+        await Assert.That(error!.Message).Contains("the limit is 1024");
+    }
+
+    [Test]
     public async Task keyframes_can_be_counted_per_track_and_in_total()
     {
         var clip = TestRigs.BenchmarkClip();

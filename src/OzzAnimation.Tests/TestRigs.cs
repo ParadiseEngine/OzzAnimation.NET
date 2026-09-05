@@ -58,6 +58,22 @@ internal static class TestRigs
 
     public const int BenchmarkKeyCount = 40;
 
+    /// <summary>
+    /// A keyframe stream in its minimum well-formed shape: eight keys over four tracks, each with a
+    /// first key at ratio 0 and a last at ratio 1. Values are zero, which decodes to a valid if
+    /// meaningless pose — these are for exercising the sampler's structure, not its arithmetic.
+    /// </summary>
+    public static KeyframeStream Stream(byte[]? ratios = null, ushort[]? previouses = null, byte[]? iframeEntries = null, uint[]? iframeDesc = null, float iframeInterval = 1f)
+    {
+        ratios ??= [0, 0, 0, 0, 1, 1, 1, 1];
+        previouses ??= [0, 0, 0, 0, 4, 4, 4, 4];
+        return new KeyframeStream(ratios, previouses, new ushort[previouses.Length * 3], iframeEntries ?? [], iframeDesc ?? [], iframeInterval);
+    }
+
+    /// <summary>A four-track clip whose translation stream is <paramref name="translations"/> and whose other two are the minimum shape.</summary>
+    public static AnimationClip ClipOf(KeyframeStream translations) =>
+        new("clip", 1f, 4, [0f, 1f], translations, Stream(), Stream());
+
     public static byte[] Fixture(string name)
     {
         using var stream = typeof(TestRigs).Assembly.GetManifestResourceStream($"OzzAnimation.Tests.Fixtures.{name}")
