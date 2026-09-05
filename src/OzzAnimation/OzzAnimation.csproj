@@ -17,7 +17,7 @@
 
   <PropertyGroup>
     <PackageId>OzzAnimation.NET</PackageId>
-    <Version>0.2.0</Version>
+    <Version>0.17.0</Version>
     <Title>OzzAnimation.NET</Title>
     <Authors>quabug</Authors>
     <Description>A managed, SIMD, allocation-free C# port of the ozz-animation runtime: sampling, blending (weighted, partial and additive), two-bone and aim IK, user-channel tracks and triggering, root-motion blending. Byte-compatible with ozz-animation 0.17 archives. No native code, trimmable and NativeAOT-compatible.</Description>

@@ -34,7 +34,17 @@ jobs:
               for line in cls.iter("line"):
                   tot += 1
                   hit += 1 if int(line.get("hits")) else 0
-          print(f"::notice::Line coverage {hit}/{tot} = {100.0 * hit / tot:.1f}%")
+          pct = 100.0 * hit / tot
+          print(f"::notice::Line coverage {hit}/{tot} = {pct:.1f}%")
+
+          # The README's badge is a static number, so it can only stay honest if something checks
+          # it. A warning, not a failure: coverage moving is normal, a stale badge is just stale.
+          import pathlib, re
+          badge = re.search(r"coverage-([0-9.]+)%25", pathlib.Path("README.md").read_text())
+          if not badge:
+              print("::warning::No coverage badge found in README.md")
+          elif abs(float(badge.group(1)) - pct) > 0.5:
+              print(f"::warning::README coverage badge says {badge.group(1)}%, measured {pct:.1f}% — update it")
           EOF
 
       - name: Upload coverage

@@ -1,5 +1,8 @@
 # OzzAnimation.NET
 
+[![NuGet](https://img.shields.io/nuget/v/OzzAnimation.NET?logo=nuget&label=NuGet)](https://www.nuget.org/packages/OzzAnimation.NET)
+[![Coverage](https://img.shields.io/badge/coverage-99.7%25-brightgreen)](#building)
+
 A managed C# port of the **[ozz-animation](https://github.com/guillaumeblanc/ozz-animation) runtime** —
 Guillaume Blanc's open-source skeletal animation library. Same data layout, same compression, same
 archive format, byte for byte; no native code, no P/Invoke, no marshalling.
@@ -49,6 +52,10 @@ A separate test samples a clip baked from a closed-form curve and checks the dec
 that curve, so the whole decode path is measured against ground truth rather than against itself.
 
 Little-endian only. A big-endian archive is refused rather than byte-swapped.
+
+**Versioning tracks the ozz release this ports**: 0.17.x reads and writes ozz-animation 0.17's
+archives, and the patch number is this port's own. A future ozz format revision would land here as
+a matching minor bump, so the version answers "which ozz does this speak?" without a lookup table.
 
 ## What is here
 
